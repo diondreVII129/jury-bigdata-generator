@@ -6,60 +6,29 @@ register();
 
 const express = require('express');
 const cors = require('cors');
-const { Pool } = require('pg');
+const { createClient } = require('@supabase/supabase-js');
 
-// --- Database ---
+// --- Supabase Client ---
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl:
-    process.env.DATABASE_URL &&
-    (process.env.DATABASE_URL.includes('supabase') ||
-      process.env.DATABASE_URL.includes('railway'))
-      ? { rejectUnauthorized: false }
-      : undefined,
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-});
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-pool.on('error', (err) => {
-  console.error('Unexpected database pool error:', err.message);
-});
-
-async function dbQuery(text, params) {
-  try {
-    return await pool.query(text, params);
-  } catch (error) {
-    console.error(`Database query error: ${error.message}`);
-    throw error;
-  }
+if (!supabaseUrl || !supabaseKey) {
+  console.error('ERROR: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env');
+  process.exit(1);
 }
 
-// --- Numeric field parser (matches src/database.ts) ---
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-const NUMERIC_FIELDS = [
-  'median_age',
-  'pct_white', 'pct_black', 'pct_hispanic', 'pct_asian',
-  'pct_less_than_hs', 'pct_hs_graduate', 'pct_some_college',
-  'pct_bachelors_degree', 'pct_graduate_degree',
-  'pct_below_poverty', 'unemployment_rate',
-  'pct_blue_collar', 'pct_white_collar', 'pct_service_industry',
-  'top_industry_1_pct', 'top_industry_2_pct', 'top_industry_3_pct',
-  'pct_homeowners', 'pct_renters',
-  'pct_urban', 'pct_suburban', 'pct_rural',
-  'pct_evangelical',
-];
+// --- Helpers ---
 
-function parseNumericFields(row) {
-  for (const field of NUMERIC_FIELDS) {
-    if (row[field] != null) row[field] = parseFloat(row[field]);
+/** Fisher-Yates shuffle (in-place) */
+function shuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
   }
-  const intFields = ['total_population', 'median_household_income', 'per_capita_income', 'median_home_value'];
-  for (const field of intFields) {
-    if (row[field] != null) row[field] = parseInt(row[field], 10);
-  }
-  return row;
+  return array;
 }
 
 // --- App ---
@@ -79,7 +48,13 @@ app.use((req, _res, next) => {
 // Health check
 app.get('/health', async (_req, res) => {
   try {
-    await pool.query('SELECT 1');
+    const { error } = await supabase
+      .from('sc_county_demographics')
+      .select('county_name')
+      .limit(1);
+
+    if (error) throw error;
+
     res.json({ status: 'ok', database: 'connected' });
   } catch (error) {
     console.error('Health check failed:', error.message);
@@ -108,22 +83,20 @@ app.get('/api/venue-analysis', async (req, res) => {
   }
 
   try {
-    // 1. Fetch census data
-    const result = await dbQuery(
-      'SELECT * FROM sc_county_demographics WHERE county_name = $1',
-      [String(county)]
-    );
+    const { data: demographics, error } = await supabase
+      .from('sc_county_demographics')
+      .select('*')
+      .eq('county_name', String(county))
+      .single();
 
-    if (result.rows.length === 0) {
+    if (error || !demographics) {
       return res.status(404).json({
         success: false,
         error: `County "${county}" not found in database`,
       });
     }
 
-    const demographics = parseNumericFields(result.rows[0]);
-
-    // 2. Generate venue analysis via Claude (lazy import to avoid requiring API key at startup)
+    // Generate venue analysis via Claude (lazy import to avoid requiring API key at startup)
     const { generateVenueAnalysis } = require('./src/master_prompt_1');
     const venueAnalysis = await generateVenueAnalysis(demographics);
 
@@ -181,36 +154,55 @@ app.get('/api/jurors', async (req, res) => {
   const rowLimit = Math.min(parsedLimit || 1200, 1200);
 
   try {
-    // First get total count for this county
-    const countResult = await dbQuery(
-      'SELECT COUNT(*)::int AS total FROM synthetic_jurors WHERE county_name = $1',
-      [String(county)]
-    );
-    const totalAvailable = countResult.rows[0]?.total || 0;
+    // Get total count (head-only request, no rows returned)
+    const { count: totalAvailable, error: countError } = await supabase
+      .from('synthetic_jurors')
+      .select('*', { count: 'exact', head: true })
+      .eq('county_name', String(county));
 
-    if (totalAvailable === 0) {
+    if (countError) throw countError;
+
+    if (!totalAvailable || totalAvailable === 0) {
       return res.status(404).json({
         success: false,
         error: `No jurors found for county "${county}"`,
       });
     }
 
-    // If requesting fewer than available, use RANDOM() for a representative sample
-    // Otherwise return all in juror_id order
-    const orderClause = rowLimit < totalAvailable ? 'RANDOM()' : 'juror_number';
+    let jurors;
 
-    const result = await dbQuery(
-      `SELECT * FROM synthetic_jurors WHERE county_name = $1 ORDER BY ${orderClause} LIMIT $2`,
-      [String(county), rowLimit]
-    );
+    if (rowLimit < totalAvailable) {
+      // Random sample: fetch all for county, shuffle in JS, take first N
+      // Max ~1200 rows per county, so this is fine
+      const { data, error } = await supabase
+        .from('synthetic_jurors')
+        .select('*')
+        .eq('county_name', String(county))
+        .order('juror_number')
+        .range(0, totalAvailable - 1);
+
+      if (error) throw error;
+      jurors = shuffle(data).slice(0, rowLimit);
+    } else {
+      // Return all in order
+      const { data, error } = await supabase
+        .from('synthetic_jurors')
+        .select('*')
+        .eq('county_name', String(county))
+        .order('juror_number')
+        .range(0, rowLimit - 1);
+
+      if (error) throw error;
+      jurors = data;
+    }
 
     res.json({
       success: true,
       county: String(county),
       state: 'SC',
-      count: result.rows.length,
+      count: jurors.length,
       total_available: totalAvailable,
-      jurors: result.rows,
+      jurors,
     });
   } catch (error) {
     console.error('Jurors query error:', error.message);
@@ -235,28 +227,40 @@ app.get('/api/counties', async (req, res) => {
   }
 
   try {
-    const result = await dbQuery(`
-      SELECT
-        s.county_name,
-        COUNT(*)::int AS juror_count,
-        c.total_population,
-        c.median_age,
-        c.pct_white,
-        c.pct_black
-      FROM synthetic_jurors s
-      LEFT JOIN sc_county_demographics c ON s.county_name = c.county_name
-      GROUP BY s.county_name, c.total_population, c.median_age, c.pct_white, c.pct_black
-      ORDER BY s.county_name
-    `);
+    // 1. Get all county demographics
+    const { data: demographics, error: demoError } = await supabase
+      .from('sc_county_demographics')
+      .select('county_name, total_population, median_age, pct_white, pct_black')
+      .order('county_name');
 
-    const counties = result.rows.map((row) => ({
+    if (demoError) throw demoError;
+
+    // 2. Get juror counts per county (parallel head-only count queries)
+    const countResults = await Promise.all(
+      demographics.map(async (d) => {
+        const { count, error } = await supabase
+          .from('synthetic_jurors')
+          .select('*', { count: 'exact', head: true })
+          .eq('county_name', d.county_name);
+
+        return { county_name: d.county_name, juror_count: error ? 0 : (count || 0) };
+      })
+    );
+
+    const countMap = {};
+    for (const c of countResults) {
+      countMap[c.county_name] = c.juror_count;
+    }
+
+    // 3. Merge
+    const counties = demographics.map((row) => ({
       name: row.county_name,
-      juror_count: row.juror_count,
-      population: row.total_population ? parseInt(row.total_population, 10) : null,
-      median_age: row.median_age ? parseFloat(row.median_age) : null,
+      juror_count: countMap[row.county_name] || 0,
+      population: row.total_population,
+      median_age: row.median_age,
       demographics: {
-        pct_white: row.pct_white ? parseFloat(row.pct_white) : null,
-        pct_black: row.pct_black ? parseFloat(row.pct_black) : null,
+        pct_white: row.pct_white,
+        pct_black: row.pct_black,
       },
     }));
 
@@ -299,14 +303,12 @@ app.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', async () => {
+process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down...');
-  await pool.end();
   process.exit(0);
 });
 
-process.on('SIGINT', async () => {
+process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down...');
-  await pool.end();
   process.exit(0);
 });

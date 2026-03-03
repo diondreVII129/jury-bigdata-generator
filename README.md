@@ -74,8 +74,10 @@ npm run verify Georgetown
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
+| `SUPABASE_URL` | Yes | - | Supabase project URL (used by API server) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | - | Supabase service role key (used by API server) |
 | `ANTHROPIC_API_KEY` | Yes | - | Your Anthropic API key |
-| `DATABASE_URL` | Yes | - | PostgreSQL connection string |
+| `DATABASE_URL` | Yes | - | PostgreSQL connection string (used by generation scripts) |
 | `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | Claude model to use |
 | `JURORS_PER_COUNTY` | No | `1200` | Jurors to generate per county |
 
@@ -332,7 +334,8 @@ curl "http://localhost:3000/api/venue-analysis?county=Georgetown&state=SC"
    - Go to [railway.app](https://railway.app) and connect your GitHub repo
 
 3. **Set environment variables** in Railway dashboard:
-   - `DATABASE_URL` — your PostgreSQL connection string
+   - `SUPABASE_URL` — your Supabase project URL
+   - `SUPABASE_SERVICE_ROLE_KEY` — your Supabase service role key
    - `ANTHROPIC_API_KEY` — your Anthropic key (required for venue analysis)
    - `PORT` — Railway sets this automatically
 
@@ -353,7 +356,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed Railway deployment instructions.
 
 ## Troubleshooting
 
-- **Connection refused**: Check DATABASE_URL and ensure PostgreSQL is running
+- **Connection refused**: Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (for API server) or DATABASE_URL (for generation scripts)
 - **API key invalid**: Verify ANTHROPIC_API_KEY in .env
 - **JSON parse errors**: These are handled automatically with retry logic
 - **Rate limits**: Built-in exponential backoff handles rate limiting
