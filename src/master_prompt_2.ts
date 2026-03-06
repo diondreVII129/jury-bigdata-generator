@@ -70,6 +70,37 @@ function deriveArchetype(pcs: number): string {
 }
 
 /**
+ * Calculate age bracket distribution based on county median age.
+ * Returns exact counts for a batch, ensuring they sum to batchSize.
+ */
+function getAgeBracketDistribution(medianAge: number, batchSize: number): Record<string, number> {
+  let pcts: Record<string, number>;
+
+  if (medianAge > 45) {
+    // Older county — heavy 55+
+    pcts = { '18-24': 0.08, '25-34': 0.12, '35-44': 0.16, '45-54': 0.22, '55-64': 0.22, '65-75': 0.20 };
+  } else if (medianAge >= 35) {
+    // Balanced county
+    pcts = { '18-24': 0.10, '25-34': 0.18, '35-44': 0.20, '45-54': 0.20, '55-64': 0.17, '65-75': 0.15 };
+  } else {
+    // Younger county — more 18-34
+    pcts = { '18-24': 0.14, '25-34': 0.22, '35-44': 0.20, '45-54': 0.18, '55-64': 0.14, '65-75': 0.12 };
+  }
+
+  const brackets = Object.keys(pcts);
+  const counts: Record<string, number> = {};
+  let allocated = 0;
+  for (let i = 0; i < brackets.length - 1; i++) {
+    counts[brackets[i]] = Math.round(batchSize * pcts[brackets[i]]);
+    allocated += counts[brackets[i]];
+  }
+  // Last bracket gets the remainder to ensure exact sum
+  counts[brackets[brackets.length - 1]] = batchSize - allocated;
+
+  return counts;
+}
+
+/**
  * Build the prompt for Claude to generate a batch of jurors matching JuryEdge 28-field schema.
  */
 function buildJurorPrompt(
@@ -94,6 +125,9 @@ function buildJurorPrompt(
   const geoUrban = Math.round(batchSize * census.pct_urban / 100);
   const geoSub = Math.round(batchSize * census.pct_suburban / 100);
   const geoRural = batchSize - geoUrban - geoSub;
+
+  // Age bracket distribution based on census median age
+  const ageDist = getAgeBracketDistribution(census.median_age, batchSize);
 
   // Estimate political lean from county data
   const isConservative = census.political_lean?.toLowerCase().includes('republican') ||
@@ -132,9 +166,14 @@ You MUST produce these EXACT counts. Count them before outputting.
 
 **Gender**: ~48% Male, ~52% Female
 
-**Age**: 18-75, median MUST be close to ${census.median_age}. This is critical.
-${census.median_age >= 45 ? `This county skews OLDER. At least 55% of jurors should be 45 or older. Include plenty of 55-75 year olds.` : `This county skews younger. At least 40% of jurors should be under 40.`}
-Age_Bracket must match: "18-24", "25-34", "35-44", "45-54", "55-64", "65-75"
+**Age_Bracket** (MANDATORY counts — county median age is ${census.median_age}):
+- "18-24": EXACTLY ${ageDist['18-24']} jurors
+- "25-34": EXACTLY ${ageDist['25-34']} jurors
+- "35-44": EXACTLY ${ageDist['35-44']} jurors
+- "45-54": EXACTLY ${ageDist['45-54']} jurors
+- "55-64": EXACTLY ${ageDist['55-64']} jurors
+- "65-75": EXACTLY ${ageDist['65-75']} jurors
+⚠️ These age counts are LOCKED. DO NOT over-represent 25-44 at the expense of 55+. Each juror's Age must fall within their Age_Bracket range.
 
 **Political_Registration** (approximate):
 - "Republican": ~${repPct}%, "Democrat": ~${demPct}%, "Independent": ~${indPct}%, "Unregistered": ~${unregPct}%

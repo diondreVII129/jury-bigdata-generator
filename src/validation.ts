@@ -9,6 +9,7 @@ export interface ValidationResult {
     totalJurors: number;
     race: { target: Record<string, number>; actual: Record<string, number> };
     medianAge: { target: number; actual: number; diff: number };
+    ageBrackets: { target: Record<string, number>; actual: Record<string, number> };
     education: { target: Record<string, number>; actual: Record<string, number> };
     gender: { actual: Record<string, number> };
     archetypes: Record<string, number>;
@@ -27,7 +28,7 @@ export function validateJuryDemographics(
   if (total === 0) {
     return {
       passed: false, errors: ['No jurors to validate'], warnings: [],
-      details: { totalJurors: 0, race: { target: {}, actual: {} }, medianAge: { target: 0, actual: 0, diff: 0 }, education: { target: {}, actual: {} }, gender: { actual: {} }, archetypes: {}, avgPCS: 0 },
+      details: { totalJurors: 0, race: { target: {}, actual: {} }, medianAge: { target: 0, actual: 0, diff: 0 }, ageBrackets: { target: {}, actual: {} }, education: { target: {}, actual: {} }, gender: { actual: {} }, archetypes: {}, avgPCS: 0 },
     };
   }
 
@@ -55,6 +56,26 @@ export function validateJuryDemographics(
   const actualMedianAge = calculateMedian(ages);
   const ageDiff = Math.abs(actualMedianAge - census.median_age);
   if (ageDiff > 2) errors.push(`Median age: target ${census.median_age}, actual ${actualMedianAge}`);
+
+  // Age bracket validation (±5% tolerance)
+  const ageBracketTarget: Record<string, number> = (() => {
+    if (census.median_age > 45) return { '18-24': 8, '25-34': 12, '35-44': 16, '45-54': 22, '55-64': 22, '65-75': 20 };
+    if (census.median_age >= 35) return { '18-24': 10, '25-34': 18, '35-44': 20, '45-54': 20, '55-64': 17, '65-75': 15 };
+    return { '18-24': 14, '25-34': 22, '35-44': 20, '45-54': 18, '55-64': 14, '65-75': 12 };
+  })();
+  const ageBracketActual: Record<string, number> = {
+    '18-24': calculatePercentage(jurors, (j) => j.age_bracket === '18-24'),
+    '25-34': calculatePercentage(jurors, (j) => j.age_bracket === '25-34'),
+    '35-44': calculatePercentage(jurors, (j) => j.age_bracket === '35-44'),
+    '45-54': calculatePercentage(jurors, (j) => j.age_bracket === '45-54'),
+    '55-64': calculatePercentage(jurors, (j) => j.age_bracket === '55-64'),
+    '65-75': calculatePercentage(jurors, (j) => j.age_bracket === '65-75'),
+  };
+  for (const bracket of Object.keys(ageBracketTarget)) {
+    const diff = Math.abs(ageBracketActual[bracket] - ageBracketTarget[bracket]);
+    if (diff > 5.0) errors.push(`Age "${bracket}": target ${ageBracketTarget[bracket]}%, actual ${ageBracketActual[bracket]}%`);
+    else if (diff > 3.0) warnings.push(`Age "${bracket}": ${ageBracketTarget[bracket]}% vs ${ageBracketActual[bracket]}%`);
+  }
 
   // Education (±5%)
   const eduTarget: Record<string, number> = {
@@ -97,7 +118,7 @@ export function validateJuryDemographics(
   return {
     passed: errors.length === 0,
     errors, warnings,
-    details: { totalJurors: total, race: { target: raceTarget, actual: raceActual }, medianAge: { target: census.median_age, actual: actualMedianAge, diff: ageDiff }, education: { target: eduTarget, actual: eduActual }, gender: { actual: genderActual }, archetypes, avgPCS },
+    details: { totalJurors: total, race: { target: raceTarget, actual: raceActual }, medianAge: { target: census.median_age, actual: actualMedianAge, diff: ageDiff }, ageBrackets: { target: ageBracketTarget, actual: ageBracketActual }, education: { target: eduTarget, actual: eduActual }, gender: { actual: genderActual }, archetypes, avgPCS },
   };
 }
 
@@ -116,6 +137,9 @@ export function printValidation(result: ValidationResult, countyName: string): v
 
   console.log('\nRace:', Object.entries(result.details.race.actual).map(([k, v]) => `${k}=${v}%`).join(', '));
   console.log(`Median Age: target=${result.details.medianAge.target} actual=${result.details.medianAge.actual}`);
+  if (result.details.ageBrackets) {
+    console.log('Age Brackets:', Object.entries(result.details.ageBrackets.actual).map(([k, v]) => `${k}=${v}%`).join(', '));
+  }
   console.log('Education:', Object.entries(result.details.education.actual).map(([k, v]) => `${k}=${v}%`).join(', '));
   console.log(`Gender: M=${result.details.gender.actual.Male}% F=${result.details.gender.actual.Female}%`);
   console.log(`Avg PCS: ${result.details.avgPCS}`);

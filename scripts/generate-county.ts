@@ -3,28 +3,33 @@ import { closePool } from '../src/database';
 
 /**
  * CLI script to generate jurors for a single county.
- * Usage: tsx scripts/generate-county.ts <CountyName> [--fresh]
+ * Usage: tsx scripts/generate-county.ts <CountyName> [count] [--fresh]
+ * count: Number of jurors to generate (defaults to JURORS_PER_COUNTY env var or 1200)
  * --fresh: Delete existing jurors for this county before generating
  */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const fresh = args.includes('--fresh');
-  const countyName = args.find((a) => !a.startsWith('--'));
+  const positional = args.filter((a) => !a.startsWith('--'));
+  const countyName = positional[0];
+  const count = positional[1] ? parseInt(positional[1], 10) : undefined;
 
   if (!countyName) {
-    console.error('Usage: tsx scripts/generate-county.ts <CountyName> [--fresh]');
+    console.error('Usage: tsx scripts/generate-county.ts <CountyName> [count] [--fresh]');
     console.error('Example: tsx scripts/generate-county.ts Georgetown --fresh');
+    console.error('Example: tsx scripts/generate-county.ts Horry 200');
     process.exit(1);
   }
 
   console.log(`\nStarting juror generation for ${countyName} County, SC`);
+  if (count) console.log(`Generating ${count} jurors (appending to existing)`);
   if (fresh) console.log('Mode: FRESH (deleting existing jurors first)');
   console.log(`Time: ${new Date().toISOString()}\n`);
 
   const startTime = Date.now();
 
   try {
-    const result = await generateJuryPool({ countyName, fresh });
+    const result = await generateJuryPool({ countyName, totalJurors: count, fresh });
     const duration = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
 
     console.log(`\n${'='.repeat(60)}`);
