@@ -13,6 +13,7 @@ export interface ValidationResult {
     education: { target: Record<string, number>; actual: Record<string, number> };
     gender: { actual: Record<string, number> };
     archetypes: Record<string, number>;
+    flagColors: Record<string, number>;
     avgPCS: number;
   };
 }
@@ -28,11 +29,11 @@ export function validateJuryDemographics(
   if (total === 0) {
     return {
       passed: false, errors: ['No jurors to validate'], warnings: [],
-      details: { totalJurors: 0, race: { target: {}, actual: {} }, medianAge: { target: 0, actual: 0, diff: 0 }, ageBrackets: { target: {}, actual: {} }, education: { target: {}, actual: {} }, gender: { actual: {} }, archetypes: {}, avgPCS: 0 },
+      details: { totalJurors: 0, race: { target: {}, actual: {} }, medianAge: { target: 0, actual: 0, diff: 0 }, ageBrackets: { target: {}, actual: {} }, education: { target: {}, actual: {} }, gender: { actual: {} }, archetypes: {}, flagColors: {}, avgPCS: 0 },
     };
   }
 
-  // Race validation (±5% tolerance — reasonable for synthetic data)
+  // Race validation (±5% tolerance)
   const raceTarget: Record<string, number> = {
     White: census.pct_white,
     Black: census.pct_black,
@@ -43,7 +44,7 @@ export function validateJuryDemographics(
     White: calculatePercentage(jurors, (j) => j.race === 'White'),
     Black: calculatePercentage(jurors, (j) => j.race === 'Black'),
     Hispanic: calculatePercentage(jurors, (j) => j.race === 'Hispanic'),
-    Other: calculatePercentage(jurors, (j) => j.race === 'Other'),
+    Other: calculatePercentage(jurors, (j) => !['White', 'Black', 'Hispanic'].includes(j.race)),
   };
   for (const race of Object.keys(raceTarget)) {
     const diff = Math.abs(raceActual[race] - raceTarget[race]);
@@ -82,14 +83,14 @@ export function validateJuryDemographics(
     'Less than HS': census.pct_less_than_hs,
     'HS Diploma/GED': census.pct_hs_graduate,
     'Some College/Associates': census.pct_some_college,
-    "Bachelor's Degree": census.pct_bachelors_degree,
+    "Bachelor's": census.pct_bachelors_degree,
     'Graduate/Professional': census.pct_graduate_degree,
   };
   const eduActual: Record<string, number> = {
     'Less than HS': calculatePercentage(jurors, (j) => j.education === 'Less than HS'),
     'HS Diploma/GED': calculatePercentage(jurors, (j) => j.education === 'HS Diploma/GED'),
     'Some College/Associates': calculatePercentage(jurors, (j) => j.education === 'Some College/Associates'),
-    "Bachelor's Degree": calculatePercentage(jurors, (j) => j.education === "Bachelor's Degree"),
+    "Bachelor's": calculatePercentage(jurors, (j) => j.education === "Bachelor's"),
     'Graduate/Professional': calculatePercentage(jurors, (j) => j.education === 'Graduate/Professional'),
   };
   for (const edu of Object.keys(eduTarget)) {
@@ -104,13 +105,22 @@ export function validateJuryDemographics(
     Female: calculatePercentage(jurors, (j) => j.gender === 'Female'),
   };
 
-  // Archetypes
+  // Archetypes (Randy v2.1 — includes Champion and Skeptic)
   const archetypes: Record<string, number> = {
+    'Champion': jurors.filter((j) => j.juror_archetype === 'Champion').length,
     'Strong Plaintiff': jurors.filter((j) => j.juror_archetype === 'Strong Plaintiff').length,
     'Lean Plaintiff': jurors.filter((j) => j.juror_archetype === 'Lean Plaintiff').length,
     'True Swing': jurors.filter((j) => j.juror_archetype === 'True Swing').length,
     'Lean Defense': jurors.filter((j) => j.juror_archetype === 'Lean Defense').length,
     'Strong Defense': jurors.filter((j) => j.juror_archetype === 'Strong Defense').length,
+    'Skeptic': jurors.filter((j) => j.juror_archetype === 'Skeptic').length,
+  };
+
+  // Flag colors
+  const flagColors: Record<string, number> = {
+    'Green': jurors.filter((j) => j.flag_color === 'Green').length,
+    'Yellow': jurors.filter((j) => j.flag_color === 'Yellow').length,
+    'Red': jurors.filter((j) => j.flag_color === 'Red').length,
   };
 
   const avgPCS = Math.round(jurors.reduce((sum, j) => sum + j.plaintiff_composite_score, 0) / total * 10) / 10;
@@ -118,7 +128,7 @@ export function validateJuryDemographics(
   return {
     passed: errors.length === 0,
     errors, warnings,
-    details: { totalJurors: total, race: { target: raceTarget, actual: raceActual }, medianAge: { target: census.median_age, actual: actualMedianAge, diff: ageDiff }, ageBrackets: { target: ageBracketTarget, actual: ageBracketActual }, education: { target: eduTarget, actual: eduActual }, gender: { actual: genderActual }, archetypes, avgPCS },
+    details: { totalJurors: total, race: { target: raceTarget, actual: raceActual }, medianAge: { target: census.median_age, actual: actualMedianAge, diff: ageDiff }, ageBrackets: { target: ageBracketTarget, actual: ageBracketActual }, education: { target: eduTarget, actual: eduActual }, gender: { actual: genderActual }, archetypes, flagColors, avgPCS },
   };
 }
 
@@ -144,5 +154,6 @@ export function printValidation(result: ValidationResult, countyName: string): v
   console.log(`Gender: M=${result.details.gender.actual.Male}% F=${result.details.gender.actual.Female}%`);
   console.log(`Avg PCS: ${result.details.avgPCS}`);
   console.log('Archetypes:', Object.entries(result.details.archetypes).map(([k, v]) => `${k}=${v}`).join(', '));
+  console.log('Flag Colors:', Object.entries(result.details.flagColors).map(([k, v]) => `${k}=${v}`).join(', '));
   console.log('');
 }

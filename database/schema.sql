@@ -1,5 +1,5 @@
 -- South Carolina Jury Big Data Generator - Database Schema
--- Matches JuryEdge Engine 28-field Juror interface
+-- Randy v2.1: 36-field Juror interface (30 core + 6 computed)
 
 DROP TABLE IF EXISTS synthetic_jurors;
 DROP TABLE IF EXISTS sc_county_demographics;
@@ -55,81 +55,83 @@ CREATE TABLE sc_county_demographics (
     last_updated TIMESTAMP DEFAULT NOW()
 );
 
--- Synthetic jurors table — matches JuryEdge Engine 28-field Juror interface
+-- Synthetic jurors table — Randy v2.1 36-field schema (30 core + 6 computed)
 CREATE TABLE synthetic_jurors (
-    -- Field 1: ID (sequential per pool, but juror_id is our PK)
     juror_id VARCHAR(50) PRIMARY KEY,
     county_name VARCHAR(50) REFERENCES sc_county_demographics(county_name),
     juror_number INTEGER NOT NULL,
 
-    -- Fields 2-3: Name
+    -- DEMOGRAPHICS (9 core fields)
     first_name VARCHAR(50) NOT NULL,
     last_name VARCHAR(50) NOT NULL,
-
-    -- Fields 4-6: Demographics
     age INTEGER CHECK (age >= 18 AND age <= 75),
     age_bracket VARCHAR(10) NOT NULL,
+    generation VARCHAR(20) CHECK (generation IN ('Gen Z', 'Millennial', 'Gen X', 'Boomer', 'Silent')),
     gender VARCHAR(10) CHECK (gender IN ('Male', 'Female')),
+    race VARCHAR(20) CHECK (race IN ('White', 'Black', 'Hispanic', 'Asian', 'Multiracial', 'Other')),
+    geographic_segment VARCHAR(100) NOT NULL,
 
-    -- Field 7: Race
-    race VARCHAR(20) CHECK (race IN ('White', 'Black', 'Hispanic', 'Other')),
+    -- RESIDENTIAL (2 core fields)
+    years_in_county VARCHAR(20) CHECK (years_in_county IN ('Less than 2 years', '2-9 years', '10-19 years', '20+ years')),
+    homeownership VARCHAR(10) CHECK (homeownership IN ('Owner', 'Renter')),
 
-    -- Field 8: Geography
-    geographic_segment VARCHAR(50) NOT NULL,
+    -- HOUSING (1 core field)
+    housing_type VARCHAR(20) CHECK (housing_type IN ('Single Family', 'Multi-Family', 'Mobile Home')),
 
-    -- Field 9: Education
+    -- SOCIOECONOMIC (6 core fields)
     education VARCHAR(50) CHECK (education IN (
         'Less than HS', 'HS Diploma/GED', 'Some College/Associates',
-        'Bachelor''s Degree', 'Graduate/Professional'
+        'Bachelor''s', 'Graduate/Professional'
     )),
-
-    -- Field 10: Occupation
+    employment_status VARCHAR(30) CHECK (employment_status IN (
+        'Full-Time', 'Part-Time', 'Unemployed', 'Retired', 'Not in Labor Force'
+    )),
+    employer_type VARCHAR(20) CHECK (employer_type IN (
+        'Private Sector', 'Government', 'Self-Employed', 'Nonprofit', 'Not Employed'
+    )),
     occupation VARCHAR(100) NOT NULL,
-
-    -- Field 11: Healthcare connection
+    household_income INTEGER CHECK (household_income >= 12000 AND household_income <= 250000),
     healthcare_connection VARCHAR(100),
 
-    -- Fields 12-15: Household
-    household_income INTEGER CHECK (household_income >= 12000 AND household_income <= 250000),
-    homeownership VARCHAR(10) CHECK (homeownership IN ('Own', 'Rent')),
-    marital_status VARCHAR(20) CHECK (marital_status IN (
-        'Single', 'Married', 'Divorced', 'Widowed', 'Separated', 'Cohabiting'
+    -- FAMILY (2 core fields)
+    marital_status VARCHAR(30) CHECK (marital_status IN (
+        'Single/Never Married', 'Married', 'Divorced', 'Widowed', 'Separated'
     )),
     number_of_children INTEGER CHECK (number_of_children >= 0 AND number_of_children <= 5),
 
-    -- Fields 16-17: Political
-    political_registration VARCHAR(20) CHECK (political_registration IN (
-        'Republican', 'Democrat', 'Independent', 'Unregistered'
-    )),
-    vote_2024 VARCHAR(20) CHECK (vote_2024 IN ('Trump', 'Harris', 'Did Not Vote', 'Other')),
+    -- VETERAN/DISABILITY (2 core fields)
+    veteran BOOLEAN DEFAULT FALSE,
+    disability_status VARCHAR(5) CHECK (disability_status IN ('Yes', 'No')),
 
-    -- Fields 18-19: Religion
+    -- POLITICAL (2 core fields)
+    political_registration VARCHAR(20) CHECK (political_registration IN (
+        'Democrat', 'Republican', 'Independent', 'Unaffiliated', 'Not Registered'
+    )),
+    vote_2024 VARCHAR(20) CHECK (vote_2024 IN ('Trump2024', 'Harris2024', 'Did Not Vote', 'Third Party')),
+
+    -- RELIGIOUS (2 core fields)
     religion VARCHAR(50) NOT NULL,
     church_attendance VARCHAR(30) CHECK (church_attendance IN (
-        'Weekly or more', 'Monthly', 'Few times a year', 'Rarely/Never'
+        'Weekly or more', '2-3x per month', 'Monthly', 'Occasionally', 'Rarely/Never'
     )),
 
-    -- Field 20: Military
-    veteran VARCHAR(5) CHECK (veteran IN ('Yes', 'No')),
-
-    -- Field 21: Media
+    -- MEDIA/JURY HISTORY (3 core fields)
     primary_news_source VARCHAR(50) NOT NULL,
+    prior_jury_service VARCHAR(5) CHECK (prior_jury_service IN ('Yes', 'No')),
+    litigation_history VARCHAR(30),
 
-    -- Field 22: Legal history
-    litigation_history VARCHAR(50),
+    -- METADATA (1 core field - auto-derived)
+    flag_color VARCHAR(10) CHECK (flag_color IN ('Green', 'Yellow', 'Red')),
 
-    -- Fields 23-26: Psychographic scores (1.0-10.0)
-    tort_reform_attitude DECIMAL(3,1) CHECK (tort_reform_attitude BETWEEN 1.0 AND 10.0),
-    authority_deference DECIMAL(3,1) CHECK (authority_deference BETWEEN 1.0 AND 10.0),
-    healthcare_trust DECIMAL(3,1) CHECK (healthcare_trust BETWEEN 1.0 AND 10.0),
-    damages_receptivity DECIMAL(3,1) CHECK (damages_receptivity BETWEEN 1.0 AND 10.0),
-
-    -- Field 27: PCS (calculated)
-    plaintiff_composite_score DECIMAL(3,1) CHECK (plaintiff_composite_score BETWEEN 0.1 AND 10.0),
-
-    -- Field 28: Archetype (derived from PCS)
+    -- 6 COMPUTED FIELDS ([PROXY-INFERRED])
+    tort_reform_attitude DECIMAL(3,1) CHECK (tort_reform_attitude BETWEEN 0.0 AND 10.0),
+    authority_deference DECIMAL(3,1) CHECK (authority_deference BETWEEN 0.0 AND 10.0),
+    healthcare_trust DECIMAL(3,1) CHECK (healthcare_trust BETWEEN 0.0 AND 10.0),
+    damages_receptivity DECIMAL(3,1) CHECK (damages_receptivity BETWEEN 0.0 AND 10.0),
+    plaintiff_composite_score DECIMAL(3,1) CHECK (plaintiff_composite_score BETWEEN 0.0 AND 10.0),
     juror_archetype VARCHAR(20) CHECK (juror_archetype IN (
-        'Strong Plaintiff', 'Lean Plaintiff', 'True Swing', 'Lean Defense', 'Strong Defense'
+        'Champion', 'Strong Plaintiff', 'Lean Plaintiff', 'True Swing',
+        'Lean Defense', 'Strong Defense', 'Skeptic'
     )),
 
     -- Metadata
@@ -147,4 +149,8 @@ CREATE INDEX idx_jurors_archetype ON synthetic_jurors(juror_archetype);
 CREATE INDEX idx_jurors_pcs ON synthetic_jurors(plaintiff_composite_score);
 CREATE INDEX idx_jurors_vote ON synthetic_jurors(vote_2024);
 CREATE INDEX idx_jurors_registration ON synthetic_jurors(political_registration);
+CREATE INDEX idx_jurors_flag_color ON synthetic_jurors(flag_color);
+CREATE INDEX idx_jurors_religion ON synthetic_jurors(religion);
+CREATE INDEX idx_jurors_church ON synthetic_jurors(church_attendance);
+CREATE INDEX idx_jurors_news ON synthetic_jurors(primary_news_source);
 CREATE INDEX idx_demographics_county ON sc_county_demographics(county_name);

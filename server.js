@@ -55,7 +55,7 @@ app.get('/health', async (_req, res) => {
 
     if (error) throw error;
 
-    res.json({ status: 'ok', database: 'connected' });
+    res.json({ status: 'ok', database: 'connected', schema: 'randy-v2.1', fields: 36 });
   } catch (error) {
     console.error('Health check failed:', error.message);
     res.status(503).json({ status: 'error', database: 'disconnected' });

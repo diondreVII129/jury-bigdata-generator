@@ -117,39 +117,71 @@ export async function getJurorCountByCounty(): Promise<{ county_name: string; co
   }));
 }
 
-// --- JuryEdge 28-field Juror ---
+// --- Randy v2.1 36-field Juror (30 core + 6 computed) ---
 
 export interface SyntheticJuror {
   juror_id: string;
   county_name: string;
   juror_number: number;
+
+  // DEMOGRAPHICS (9 core)
   first_name: string;
   last_name: string;
   age: number;
   age_bracket: string;
+  generation: string;
   gender: string;
   race: string;
   geographic_segment: string;
-  education: string;
-  occupation: string;
-  healthcare_connection: string | null;
-  household_income: number;
+
+  // RESIDENTIAL (2 core)
+  years_in_county: string;
   homeownership: string;
+
+  // HOUSING (1 core)
+  housing_type: string;
+
+  // SOCIOECONOMIC (6 core)
+  education: string;
+  employment_status: string;
+  employer_type: string;
+  occupation: string;
+  household_income: number;
+  healthcare_connection: string | null;
+
+  // FAMILY (2 core)
   marital_status: string;
   number_of_children: number;
+
+  // VETERAN/DISABILITY (2 core)
+  veteran: boolean;
+  disability_status: string;
+
+  // POLITICAL (2 core)
   political_registration: string;
   vote_2024: string;
+
+  // RELIGIOUS (2 core)
   religion: string;
   church_attendance: string;
-  veteran: string;
+
+  // MEDIA/JURY HISTORY (3 core)
   primary_news_source: string;
+  prior_jury_service: string;
   litigation_history: string | null;
+
+  // METADATA (1 core - auto-derived)
+  flag_color: string;
+
+  // 6 COMPUTED ([PROXY-INFERRED])
   tort_reform_attitude: number;
   authority_deference: number;
   healthcare_trust: number;
   damages_receptivity: number;
   plaintiff_composite_score: number;
   juror_archetype: string;
+
+  // System metadata
   generation_batch_id: string;
 }
 
@@ -159,26 +191,35 @@ export async function insertJurors(jurors: SyntheticJuror[]): Promise<number> {
     try {
       await query(
         `INSERT INTO synthetic_jurors (
-          juror_id, county_name, juror_number, first_name, last_name,
-          age, age_bracket, gender, race, geographic_segment,
-          education, occupation, healthcare_connection,
-          household_income, homeownership, marital_status, number_of_children,
-          political_registration, vote_2024, religion, church_attendance,
-          veteran, primary_news_source, litigation_history,
+          juror_id, county_name, juror_number,
+          first_name, last_name, age, age_bracket, generation, gender, race, geographic_segment,
+          years_in_county, homeownership, housing_type,
+          education, employment_status, employer_type, occupation, household_income, healthcare_connection,
+          marital_status, number_of_children,
+          veteran, disability_status,
+          political_registration, vote_2024,
+          religion, church_attendance,
+          primary_news_source, prior_jury_service, litigation_history,
+          flag_color,
           tort_reform_attitude, authority_deference, healthcare_trust, damages_receptivity,
           plaintiff_composite_score, juror_archetype, generation_batch_id
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
           $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-          $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
+          $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
+          $31,$32,$33,$34,$35,$36,$37,$38,$39
         ) ON CONFLICT (juror_id) DO NOTHING`,
         [
-          j.juror_id, j.county_name, j.juror_number, j.first_name, j.last_name,
-          j.age, j.age_bracket, j.gender, j.race, j.geographic_segment,
-          j.education, j.occupation, j.healthcare_connection,
-          j.household_income, j.homeownership, j.marital_status, j.number_of_children,
-          j.political_registration, j.vote_2024, j.religion, j.church_attendance,
-          j.veteran, j.primary_news_source, j.litigation_history,
+          j.juror_id, j.county_name, j.juror_number,
+          j.first_name, j.last_name, j.age, j.age_bracket, j.generation, j.gender, j.race, j.geographic_segment,
+          j.years_in_county, j.homeownership, j.housing_type,
+          j.education, j.employment_status, j.employer_type, j.occupation, j.household_income, j.healthcare_connection,
+          j.marital_status, j.number_of_children,
+          j.veteran, j.disability_status,
+          j.political_registration, j.vote_2024,
+          j.religion, j.church_attendance,
+          j.primary_news_source, j.prior_jury_service, j.litigation_history,
+          j.flag_color,
           j.tort_reform_attitude, j.authority_deference, j.healthcare_trust, j.damages_receptivity,
           j.plaintiff_composite_score, j.juror_archetype, j.generation_batch_id,
         ]
