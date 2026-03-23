@@ -9,7 +9,8 @@
     "setup": "tsx scripts/setup-database.ts",
     "generate": "tsx scripts/generate-county.ts",
     "generate-all": "tsx scripts/generate-all-counties.ts",
-    "verify": "tsx scripts/verify-generation.ts"
+    "verify": "tsx scripts/verify-generation.ts",
+    "regenerate-all": "npx tsx scripts/regenerate-all-railway.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
