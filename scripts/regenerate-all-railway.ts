@@ -2,49 +2,77 @@ import { generateJuryPool, GenerationResult } from '../src/master_prompt_2';
 import { getAllCountyNames, query, closePool } from '../src/database';
 
 /**
- * Railway one-off regeneration script.
- * Deletes ALL existing jurors, then regenerates all 46 SC counties
- * with the Randy v2.1 36-field schema.
+ * Railway worker regeneration script (RESUMABLE).
+ * Checks each county's juror count — skips complete ones, regenerates the rest.
+ * Safe to re-run if the process is interrupted.
  *
- * Usage: railway run npm run regenerate-all
+ * Deploy as a Railway worker service with restart policy: NEVER
  */
 async function main(): Promise<void> {
   console.log('='.repeat(60));
-  console.log('RANDY v2.1 FULL REGENERATION — ALL 46 SC COUNTIES');
+  console.log('RANDY v2.1 REGENERATION WORKER — ALL 46 SC COUNTIES');
   console.log(`Started: ${new Date().toISOString()}`);
   console.log('Schema: 30 core fields + 6 computed psychographic fields = 36 total');
+  console.log('Mode: RESUMABLE — skips counties with 1200+ jurors');
   console.log('='.repeat(60));
 
-  // Step 1: Delete ALL old jurors
-  console.log('\n>>> STEP 1: Deleting all existing jurors...');
-  const deleteResult = await query('DELETE FROM synthetic_jurors');
-  const deletedCount = deleteResult.rowCount ?? 0;
-  console.log(`Deleted ${deletedCount.toLocaleString()} old jurors from database.`);
-
-  // Step 2: Get all counties
   const counties = await getAllCountyNames();
-  console.log(`\n>>> STEP 2: Regenerating ${counties.length} counties (1,200 jurors each)`);
-  console.log(`Expected total: ${(counties.length * 1200).toLocaleString()} jurors\n`);
+
+  // Check current state of each county
+  const countResult = await query(
+    `SELECT county_name, COUNT(*) as cnt FROM synthetic_jurors GROUP BY county_name`
+  );
+  const countMap = new Map<string, number>();
+  for (const row of countResult.rows) {
+    countMap.set(row.county_name, parseInt(row.cnt, 10));
+  }
+
+  const toGenerate: string[] = [];
+  const skipped: string[] = [];
+
+  for (const county of counties) {
+    const count = countMap.get(county) || 0;
+    if (count >= 1200) {
+      skipped.push(county);
+    } else {
+      toGenerate.push(county);
+    }
+  }
+
+  console.log(`\nCounty status: ${skipped.length} complete, ${toGenerate.length} need generation`);
+  if (skipped.length > 0) {
+    console.log(`Skipping (already complete): ${skipped.join(', ')}`);
+  }
+  if (toGenerate.length === 0) {
+    console.log('\nAll 46 counties already have 1200+ jurors. Nothing to do.');
+    await closePool();
+    process.exit(0);
+  }
+
+  console.log(`\nGenerating ${toGenerate.length} counties (1,200 jurors each)`);
+  console.log(`Expected new jurors: ${(toGenerate.length * 1200).toLocaleString()}\n`);
 
   const results: GenerationResult[] = [];
   const errors: { county: string; error: string }[] = [];
   const startTime = Date.now();
 
-  for (let i = 0; i < counties.length; i++) {
-    const county = counties[i];
-    const progress = `[${i + 1}/${counties.length}]`;
+  for (let i = 0; i < toGenerate.length; i++) {
+    const county = toGenerate[i];
+    const overallIdx = counties.indexOf(county) + 1;
+    const progress = `[${i + 1}/${toGenerate.length}] (county ${overallIdx}/46)`;
 
     console.log(`\n${'#'.repeat(60)}`);
     console.log(`${progress} Processing: ${county} County`);
     console.log('#'.repeat(60));
 
     try {
-      const result = await generateJuryPool({ countyName: county, fresh: false });
+      // Use fresh=true to clear any partial data for this county
+      const result = await generateJuryPool({ countyName: county, fresh: true });
       results.push(result);
 
       const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
       const avgPerCounty = (Date.now() - startTime) / (i + 1) / 1000 / 60;
-      const remaining = (avgPerCounty * (counties.length - i - 1)).toFixed(1);
+      const remaining = (avgPerCounty * (toGenerate.length - i - 1)).toFixed(1);
 
       console.log(`\n${progress} ${county} COMPLETE - ${result.totalJurors} jurors | Validation: ${result.validation.passed ? 'PASS' : 'FAIL'}`);
       console.log(`${progress} Elapsed: ${elapsed}min | Est. remaining: ${remaining}min`);
@@ -63,10 +91,11 @@ async function main(): Promise<void> {
   console.log(`\n${'='.repeat(60)}`);
   console.log('REGENERATION SUMMARY');
   console.log('='.repeat(60));
-  console.log(`Total counties processed: ${results.length}/${counties.length}`);
-  console.log(`Total jurors generated: ${totalJurors.toLocaleString()}`);
+  console.log(`Counties skipped (already complete): ${skipped.length}`);
+  console.log(`Counties processed this run: ${results.length}/${toGenerate.length}`);
+  console.log(`Jurors generated this run: ${totalJurors.toLocaleString()}`);
   console.log(`Validation pass rate: ${passed}/${results.length} (${((passed / Math.max(results.length, 1)) * 100).toFixed(1)}%)`);
-  console.log(`Total duration: ${totalDuration} minutes (${(parseFloat(totalDuration) / 60).toFixed(1)} hours)`);
+  console.log(`Duration: ${totalDuration} minutes (${(parseFloat(totalDuration) / 60).toFixed(1)} hours)`);
   console.log(`Completed: ${new Date().toISOString()}`);
 
   if (errors.length > 0) {
@@ -82,11 +111,8 @@ async function main(): Promise<void> {
   await closePool();
 
   if (errors.length > 0) {
-    console.log(`\n⚠ ${errors.length} counties failed. Re-run with: npm run generate <CountyName> --fresh`);
     process.exit(1);
   }
-
-  console.log('\nAll 46 counties regenerated successfully with Randy v2.1 schema.');
   process.exit(0);
 }
 

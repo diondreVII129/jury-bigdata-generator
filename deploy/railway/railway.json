@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "npm run generate-all",
+    "startCommand": "npm run regenerate-all",
     "restartPolicyType": "NEVER"
   }
 }
