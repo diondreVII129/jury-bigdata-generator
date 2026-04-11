@@ -61,8 +61,9 @@ export function validateJuryDemographics(
   // Age bracket validation (±5% tolerance)
   const ageBracketTarget: Record<string, number> = (() => {
     if (census.median_age > 45) return { '18-24': 8, '25-34': 12, '35-44': 16, '45-54': 22, '55-64': 22, '65-75': 20 };
-    if (census.median_age >= 35) return { '18-24': 10, '25-34': 18, '35-44': 20, '45-54': 20, '55-64': 17, '65-75': 15 };
-    return { '18-24': 14, '25-34': 22, '35-44': 20, '45-54': 18, '55-64': 14, '65-75': 12 };
+    if (census.median_age >= 40) return { '18-24': 10, '25-34': 18, '35-44': 20, '45-54': 20, '55-64': 17, '65-75': 15 };
+    if (census.median_age >= 35) return { '18-24': 12, '25-34': 22, '35-44': 22, '45-54': 18, '55-64': 14, '65-75': 12 };
+    return { '18-24': 14, '25-34': 24, '35-44': 22, '45-54': 16, '55-64': 13, '65-75': 11 };
   })();
   const ageBracketActual: Record<string, number> = {
     '18-24': calculatePercentage(jurors, (j) => j.age_bracket === '18-24'),
@@ -78,13 +79,15 @@ export function validateJuryDemographics(
     else if (diff > 3.0) warnings.push(`Age "${bracket}": ${ageBracketTarget[bracket]}% vs ${ageBracketActual[bracket]}%`);
   }
 
-  // Education (±5%)
+  // Education (±5%) — normalize to 100% so targets match what the prompt sends Claude
+  const eduRawTotal = census.pct_less_than_hs + census.pct_hs_graduate + census.pct_some_college +
+    census.pct_bachelors_degree + census.pct_graduate_degree || 100;
   const eduTarget: Record<string, number> = {
-    'Less than HS': census.pct_less_than_hs,
-    'HS Diploma/GED': census.pct_hs_graduate,
-    'Some College/Associates': census.pct_some_college,
-    "Bachelor's": census.pct_bachelors_degree,
-    'Graduate/Professional': census.pct_graduate_degree,
+    'Less than HS': Math.round(census.pct_less_than_hs / eduRawTotal * 1000) / 10,
+    'HS Diploma/GED': Math.round(census.pct_hs_graduate / eduRawTotal * 1000) / 10,
+    'Some College/Associates': Math.round(census.pct_some_college / eduRawTotal * 1000) / 10,
+    "Bachelor's": Math.round(census.pct_bachelors_degree / eduRawTotal * 1000) / 10,
+    'Graduate/Professional': Math.round(census.pct_graduate_degree / eduRawTotal * 1000) / 10,
   };
   const eduActual: Record<string, number> = {
     'Less than HS': calculatePercentage(jurors, (j) => j.education === 'Less than HS'),

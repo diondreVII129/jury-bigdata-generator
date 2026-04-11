@@ -166,10 +166,12 @@ function getAgeBracketDistribution(medianAge: number, batchSize: number): Record
 
   if (medianAge > 45) {
     pcts = { '18-24': 0.08, '25-34': 0.12, '35-44': 0.16, '45-54': 0.22, '55-64': 0.22, '65-75': 0.20 };
-  } else if (medianAge >= 35) {
+  } else if (medianAge >= 40) {
     pcts = { '18-24': 0.10, '25-34': 0.18, '35-44': 0.20, '45-54': 0.20, '55-64': 0.17, '65-75': 0.15 };
+  } else if (medianAge >= 35) {
+    pcts = { '18-24': 0.12, '25-34': 0.22, '35-44': 0.22, '45-54': 0.18, '55-64': 0.14, '65-75': 0.12 };
   } else {
-    pcts = { '18-24': 0.14, '25-34': 0.22, '35-44': 0.20, '45-54': 0.18, '55-64': 0.14, '65-75': 0.12 };
+    pcts = { '18-24': 0.14, '25-34': 0.24, '35-44': 0.22, '45-54': 0.16, '55-64': 0.13, '65-75': 0.11 };
   }
 
   // Largest-remainder method to avoid rounding bias against the last bracket
@@ -210,12 +212,20 @@ function buildJurorPrompt(
   const raceAsian = Math.round(batchSize * (census.pct_asian || 0) / 100);
   const raceOther = batchSize - raceWhite - raceBlack - raceHispanic - raceAsian;
 
-  // Education distribution
-  const eduLtHS = Math.round(batchSize * census.pct_less_than_hs / 100);
-  const eduHS = Math.round(batchSize * census.pct_hs_graduate / 100);
-  const eduSome = Math.round(batchSize * census.pct_some_college / 100);
-  const eduBA = Math.round(batchSize * census.pct_bachelors_degree / 100);
-  const eduGrad = batchSize - eduLtHS - eduHS - eduSome - eduBA;
+  // Education distribution — normalize to 100% first (census pcts may not sum exactly),
+  // then apply largest-remainder so all 5 categories are computed fairly.
+  const eduRawPcts = [
+    census.pct_less_than_hs, census.pct_hs_graduate, census.pct_some_college,
+    census.pct_bachelors_degree, census.pct_graduate_degree,
+  ];
+  const eduTotal = eduRawPcts.reduce((a, b) => a + b, 0) || 100;
+  const eduRawCounts = eduRawPcts.map(p => batchSize * p / eduTotal);
+  const eduFloored = eduRawCounts.map(c => Math.floor(c));
+  let eduRemaining = batchSize - eduFloored.reduce((a, b) => a + b, 0);
+  const eduFracs = eduRawCounts.map((c, i) => ({ i, frac: c - eduFloored[i] }));
+  eduFracs.sort((a, b) => b.frac - a.frac);
+  for (let r = 0; r < eduRemaining; r++) eduFloored[eduFracs[r].i]++;
+  const [eduLtHS, eduHS, eduSome, eduBA, eduGrad] = eduFloored;
 
   // Geographic distribution
   const geoUrban = Math.round(batchSize * census.pct_urban / 100);
@@ -234,7 +244,7 @@ function buildJurorPrompt(
   const unaffPct = 10;
   const notRegPct = 100 - repPct - demPct - indPct - unaffPct;
 
-  return `You are generating synthetic juror profiles for ${census.county_name} County, South Carolina.
+  return `You are generating synthetic juror profiles for ${census.county_name} County, ${census.state_name}.
 This is batch ${batchNumber} of ${totalBatches}. Generate EXACTLY ${batchSize} jurors.
 
 Each juror must have EXACTLY these 30 core fields. DO NOT generate psychographic scores — we calculate those.
@@ -330,7 +340,7 @@ You MUST produce these EXACT counts. Count them before outputting.
 **Litigation_History**: ~85% null, remainder:
 - "Prior Plaintiff" (~8%), "Prior Defendant" (~4%), null for rest
 
-=== COUNTY CONTEXT: ${census.county_name.toUpperCase()} COUNTY, SC ===
+=== COUNTY CONTEXT: ${census.county_name.toUpperCase()} COUNTY, ${census.state_name.toUpperCase()} ===
 - Population: ${census.total_population.toLocaleString()}
 - Median Household Income: $${census.median_household_income.toLocaleString()}
 - Poverty Rate: ${census.pct_below_poverty}%
@@ -708,18 +718,19 @@ export async function generateJuryPool(options: GenerationOptions): Promise<Gene
   const totalBatches = Math.ceil(totalJurors / batchSize);
   const batchId = uuidv4();
 
+  const census = await getCountyDemographics(countyName);
+  if (!census) {
+    throw new Error(`County "${countyName}" not found in database. Run 'npm run setup' first.`);
+  }
+
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`GENERATING JURY POOL (Randy v2.1): ${countyName} County, SC`);
+  console.log(`GENERATING JURY POOL (Randy v2.1): ${countyName} County, ${census.state_name}`);
   console.log(`Total jurors: ${totalJurors} | Batches: ${totalBatches} | Batch size: ${batchSize}`);
   console.log(`Schema: 30 core fields + 6 computed psychographic fields = 36 total`);
   console.log(`Concurrency: ${PARALLEL_CONCURRENCY} parallel batches`);
   console.log(`Batch ID: ${batchId}`);
   console.log('='.repeat(60));
 
-  const census = await getCountyDemographics(countyName);
-  if (!census) {
-    throw new Error(`County "${countyName}" not found in database. Run 'npm run setup' first.`);
-  }
   console.log(`Loaded census data for ${countyName} County (pop: ${census.total_population.toLocaleString()})`);
 
   if (fresh) {

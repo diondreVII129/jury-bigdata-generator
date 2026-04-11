@@ -78,6 +78,7 @@ export interface CountyDemographics {
   pct_rural: number;
   political_lean: string;
   pct_evangelical: number;
+  state_name: string;
 }
 
 export async function getCountyDemographics(countyName: string): Promise<CountyDemographics | null> {
