@@ -432,7 +432,7 @@ function transformJuror(
   const uniqueId = `${countyName.toLowerCase().replace(/\s+/g, '_')}_${jurorNum}_${batchId.substring(0, 8)}`;
 
   const age = clamp(Number(raw.Age) || 40, 18, 75);
-  const generation = normalizeGeneration(String(raw.Generation || ''), age);
+  const generation = deriveGeneration(age);
   const veteran = raw.Veteran === true || raw.Veteran === 'true' || raw.Veteran === 'Yes';
 
   // Calculate all 6 psychographic scores + flag_color from core fields
