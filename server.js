@@ -75,24 +75,22 @@ app.get('/api/venue-analysis', async (req, res) => {
     });
   }
 
-  if (state && String(state).toUpperCase() !== 'SC') {
-    return res.status(400).json({
-      success: false,
-      error: 'Only South Carolina (SC) data is currently available',
-    });
-  }
-
   try {
-    const { data: demographics, error } = await supabase
+    let query = supabase
       .from('sc_county_demographics')
       .select('*')
-      .eq('county_name', String(county))
-      .single();
+      .eq('county_name', String(county));
+
+    if (state) {
+      query = query.ilike('state_name', `%${String(state)}%`);
+    }
+
+    const { data: demographics, error } = await query.single();
 
     if (error || !demographics) {
       return res.status(404).json({
         success: false,
-        error: `County "${county}" not found in database`,
+        error: `County "${county}"${state ? ` in state "${state}"` : ''} not found in database`,
       });
     }
 
@@ -103,7 +101,7 @@ app.get('/api/venue-analysis', async (req, res) => {
     res.json({
       success: true,
       county: String(county),
-      state: 'SC',
+      state: demographics.state_name,
       venue_analysis: venueAnalysis,
     });
   } catch (error) {
@@ -136,13 +134,6 @@ app.get('/api/jurors', async (req, res) => {
     });
   }
 
-  if (state && String(state).toUpperCase() !== 'SC') {
-    return res.status(400).json({
-      success: false,
-      error: 'Only South Carolina (SC) data is currently available',
-    });
-  }
-
   // Parse and validate limit
   const parsedLimit = parseInt(limit, 10);
   if (limit !== undefined && (isNaN(parsedLimit) || parsedLimit < 1)) {
@@ -154,6 +145,31 @@ app.get('/api/jurors', async (req, res) => {
   const rowLimit = Math.min(parsedLimit || 1200, 1200);
 
   try {
+    // Look up state_name from demographics table (also validates state filter)
+    let demoQuery = supabase
+      .from('sc_county_demographics')
+      .select('state_name')
+      .eq('county_name', String(county));
+
+    if (state) {
+      demoQuery = demoQuery.ilike('state_name', `%${String(state)}%`);
+    }
+
+    const { data: demoRow } = await demoQuery.maybeSingle();
+    const stateName = demoRow ? demoRow.state_name : (state ? String(state).toUpperCase() : null);
+
+    // If state filter was provided but county not found in that state, return empty
+    if (state && !demoRow) {
+      return res.json({
+        success: true,
+        county: String(county),
+        state: String(state).toUpperCase(),
+        count: 0,
+        total_available: 0,
+        jurors: [],
+      });
+    }
+
     // Get total count (head-only request, no rows returned)
     const { count: totalAvailable, error: countError } = await supabase
       .from('synthetic_jurors')
@@ -173,7 +189,7 @@ app.get('/api/jurors', async (req, res) => {
 
     if (rowLimit < totalAvailable) {
       // Random sample: fetch all for county, shuffle in JS, take first N
-      // Max ~1200 rows per county, so this is fine
+      // Max ~1300 rows per county, so this is fine
       const { data, error } = await supabase
         .from('synthetic_jurors')
         .select('*')
@@ -196,10 +212,15 @@ app.get('/api/jurors', async (req, res) => {
       jurors = data;
     }
 
+    // Inject state_name into each juror record if not already present
+    if (stateName) {
+      jurors = jurors.map((j) => j.state_name ? j : { ...j, state_name: stateName });
+    }
+
     res.json({
       success: true,
       county: String(county),
-      state: 'SC',
+      state: stateName,
       count: jurors.length,
       total_available: totalAvailable,
       jurors,
@@ -219,19 +240,18 @@ app.get('/api/jurors', async (req, res) => {
 app.get('/api/counties', async (req, res) => {
   const { state } = req.query;
 
-  if (state && String(state).toUpperCase() !== 'SC') {
-    return res.status(400).json({
-      success: false,
-      error: 'Only South Carolina (SC) data is currently available',
-    });
-  }
-
   try {
-    // 1. Get all county demographics
-    const { data: demographics, error: demoError } = await supabase
+    // 1. Get all county demographics (optionally filtered by state)
+    let demoQuery = supabase
       .from('sc_county_demographics')
-      .select('county_name, total_population, median_age, pct_white, pct_black')
+      .select('county_name, state_name, total_population, median_age, pct_white, pct_black')
       .order('county_name');
+
+    if (state) {
+      demoQuery = demoQuery.ilike('state_name', `%${String(state)}%`);
+    }
+
+    const { data: demographics, error: demoError } = await demoQuery;
 
     if (demoError) throw demoError;
 
@@ -255,6 +275,7 @@ app.get('/api/counties', async (req, res) => {
     // 3. Merge
     const counties = demographics.map((row) => ({
       name: row.county_name,
+      state: row.state_name,
       juror_count: countMap[row.county_name] || 0,
       population: row.total_population,
       median_age: row.median_age,
@@ -268,7 +289,7 @@ app.get('/api/counties', async (req, res) => {
 
     res.json({
       success: true,
-      state: 'SC',
+      state: state ? String(state).toUpperCase() : 'ALL',
       total_counties: counties.length,
       total_jurors: totalJurors,
       counties,
