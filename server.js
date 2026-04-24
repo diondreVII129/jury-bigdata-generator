@@ -22,6 +22,27 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // --- Helpers ---
 
+/** Map 2-letter state abbreviations to full names stored in sc_county_demographics */
+const STATE_ABBREV = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California',
+  CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia',
+  HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa',
+  KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
+  MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri',
+  MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey',
+  NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio',
+  OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina',
+  SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont',
+  VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+};
+
+/** Resolve state param (2-letter abbrev OR full name) to full name for DB matching */
+function resolveStateName(state) {
+  if (!state) return null;
+  const upper = String(state).toUpperCase().trim();
+  return STATE_ABBREV[upper] || String(state).trim();
+}
+
 /** Fisher-Yates shuffle (in-place) */
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
@@ -82,7 +103,7 @@ app.get('/api/venue-analysis', async (req, res) => {
       .eq('county_name', String(county));
 
     if (state) {
-      query = query.ilike('state_name', `%${String(state)}%`);
+      query = query.eq('state_name', resolveStateName(state));
     }
 
     const { data: demographics, error } = await query.single();
@@ -152,7 +173,7 @@ app.get('/api/jurors', async (req, res) => {
       .eq('county_name', String(county));
 
     if (state) {
-      demoQuery = demoQuery.ilike('state_name', `%${String(state)}%`);
+      demoQuery = demoQuery.eq('state_name', resolveStateName(state));
     }
 
     const { data: demoRow } = await demoQuery.maybeSingle();
@@ -248,7 +269,7 @@ app.get('/api/counties', async (req, res) => {
       .order('county_name');
 
     if (state) {
-      demoQuery = demoQuery.ilike('state_name', `%${String(state)}%`);
+      demoQuery = demoQuery.eq('state_name', resolveStateName(state));
     }
 
     const { data: demographics, error: demoError } = await demoQuery;
